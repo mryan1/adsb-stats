@@ -2,6 +2,8 @@ import pyModeS as pms
 from pyModeS.extra.tcpclient import TcpClient
 import os
 import redis
+from cachetools import cached, TTLCache
+
 
 ADSBHOST = os.environ['ADSBHOST']
 BEASTPORT = os.environ['BEASTPORT']
@@ -12,15 +14,21 @@ REDISPORT = os.environ['REDISPORT']
 # define your custom class by extending the TcpClient
 #   - implement your handle_messages() methods
 class ADSBClient(TcpClient):
-    def __init__(self, host, port, rawtype):
+    def __init__(self, host, port, rawtype, redisClient):
         super(ADSBClient, self).__init__(host, port, rawtype)
+        self.rc = redisClient
         self.currentICAO = {}
+        self.oldICAO = {}
+
+
+    @cached(cache = TTLCache(maxsize = 30, ttl = 300))            
+    def updateRedis(self, newICAO):
+        return True
 
     def updateCurrentICAO(self, icao, ts):
         self.currentICAO[icao] = ts
         #prune icaos that aren't around anymore
-
-        return self.currentICAO
+        self.currentICAO = {k:v for (k,v) in self.currentICAO.items() if v > ts-120}
 
     def handle_messages(self, messages):
         for msg, ts in messages:
@@ -35,15 +43,21 @@ class ADSBClient(TcpClient):
             if pms.crc(msg) !=0:  # CRC fail
                 continue
 
-            icao = pms.adsb.icao(msg)
-            tc = pms.adsb.typecode(msg)
+            #tc = pms.adsb.typecode(msg)
 
             # TODO: write you magic code here
-            print(ts, icao, tc, msg)
+            #print(ts, icao, tc, msg)
             #TODO: use cachetools to store ICAO values, if it's not in the cache then see if it's in reddis, and if not, add it
             #function can maintain a list of current ICAO values and return them.  TTL can be 30mins?
-            print (self.updateCurrentICAO(icao, ts))
+            self.oldICAO = self.currentICAO.copy()
+            icao = pms.adsb.icao(msg)
+            self.updateCurrentICAO(icao, ts)
 
+            if self.oldICAO != self.currentICAO:
+                #update redis with any new ICAOS
+                new = set(self.currentICAO) - set(self.oldICAO)
+                if len(new) > 0:
+                    print("New: ", new)
 
 # populate reddis with aircraft data from https://opensky-network.org/datasets/metadata/
 
@@ -51,5 +65,5 @@ class ADSBClient(TcpClient):
 r = redis.Redis(host=REDISSERVER, port=REDISPORT, db=0)
 r.set('foo', 'bar')
 
-client = ADSBClient(host=ADSBHOST, port=BEASTPORT, rawtype='beast')
+client = ADSBClient(host=ADSBHOST, port=BEASTPORT, rawtype='beast', redisClient=r)
 client.run()

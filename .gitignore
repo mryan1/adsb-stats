@@ -153,3 +153,4 @@ cython_debug/
 bin/*
 pyvenv.cfg
 setupenv.sh
+.vscode/launch.json
