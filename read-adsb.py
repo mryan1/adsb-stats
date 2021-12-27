@@ -2,8 +2,6 @@ import pyModeS as pms
 from pyModeS.extra.tcpclient import TcpClient
 import os
 import redis
-from cachetools import cached, TTLCache
-
 
 ADSBHOST = os.environ['ADSBHOST']
 BEASTPORT = os.environ['BEASTPORT']
@@ -18,9 +16,10 @@ class ADSBClient(TcpClient):
         super(ADSBClient, self).__init__(host, port, rawtype)
         self.currentICAO = {}
 
-    @cached(cache = TTLCache(maxsize = 1000, ttl = 1800))            
     def updateCurrentICAO(self, icao, ts):
         self.currentICAO[icao] = ts
+        #prune icaos that aren't around anymore
+
         return self.currentICAO
 
     def handle_messages(self, messages):
