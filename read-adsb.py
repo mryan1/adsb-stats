@@ -22,8 +22,9 @@ class ADSBClient(TcpClient):
 
 
     @cached(cache = TTLCache(maxsize = 30, ttl = 300))            
-    def updateRedis(self, newICAO):
-        return True
+    def updateRedisPlanes(self, newICAO):
+        for i in newICAO:
+            self.rc.zincrby("planes", 1, i)
 
     def updateCurrentICAO(self, icao, ts):
         self.currentICAO[icao] = ts
@@ -58,6 +59,9 @@ class ADSBClient(TcpClient):
                 new = set(self.currentICAO) - set(self.oldICAO)
                 if len(new) > 0:
                     print("New: ", new)
+                    print("Current: ", self.currentICAO)
+                    self.updateRedisPlanes(frozenset(new))
+                    
 
 # populate reddis with aircraft data from https://opensky-network.org/datasets/metadata/
 
