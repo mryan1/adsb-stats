@@ -3,6 +3,8 @@ from pyModeS.extra.tcpclient import TcpClient
 import os
 import redis
 from cachetools import cached, TTLCache
+import urllib.request
+import csv
 
 
 ADSBHOST = os.environ['ADSBHOST']
@@ -62,12 +64,18 @@ class ADSBClient(TcpClient):
                     print("Current: ", self.currentICAO)
                     self.updateRedisPlanes(frozenset(new))
                     
-
-# populate reddis with aircraft data from https://opensky-network.org/datasets/metadata/
-
-# run new client, change the host, port, and rawtype if needed
 r = redis.Redis(host=REDISSERVER, port=REDISPORT, db=0)
-r.set('foo', 'bar')
+
+# populate reddis with aircraft data from https://opensky-netwo
+# rk.org/datasets/metadata/
+url = 'https://opensky-network.org/datasets/metadata/aircraftDatabase.csv'
+file_name = 'aircraftData.csv'
+#urllib.request.urlretrieve(url, file_name)
+with open(file_name, newline='') as csvfile:
+    reader = csv.reader(csvfile)
+    for row in reader:
+        ac = {"registration":row[1], "manufacturername":row[3], "model":row[4], "serialnumber":row[6], "owner":row[13], "built": row[18]}
+        r.hmset("icao:" + row[0], ac)
 
 client = ADSBClient(host=ADSBHOST, port=BEASTPORT, rawtype='beast', redisClient=r)
 client.run()
