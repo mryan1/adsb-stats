@@ -5,6 +5,7 @@ import redis
 from cachetools import cached, TTLCache
 import urllib.request
 import csv
+import time
 
 
 ADSBHOST = os.environ['ADSBHOST']
@@ -14,8 +15,6 @@ REDISPORT = os.environ['REDISPORT']
 dburl = 'https://opensky-network.org/datasets/metadata/aircraftDatabase.csv'
 dbFileName = 'aircraftData.csv'
 
-# define your custom class by extending the TcpClient
-#   - implement your handle_messages() methods
 class ADSBClient(TcpClient):
     def __init__(self, host, port, rawtype, redisClient):
         super(ADSBClient, self).__init__(host, port, rawtype)
@@ -59,12 +58,6 @@ class ADSBClient(TcpClient):
             if pms.crc(msg) !=0:  # CRC fail
                 continue
 
-            #tc = pms.adsb.typecode(msg)
-
-            # TODO: write you magic code here
-            #print(ts, icao, tc, msg)
-            #TODO: use cachetools to store ICAO values, if it's not in the cache then see if it's in reddis, and if not, add it
-            #function can maintain a list of current ICAO values and return them.  TTL can be 30mins?
             self.oldICAO = self.currentICAO.copy()
             icao = pms.adsb.icao(msg)
             self.updateCurrentICAO(icao, ts)
@@ -79,6 +72,7 @@ class ADSBClient(TcpClient):
 
 def updateDB():
     urllib.request.urlretrieve(dburl, dbFileName)
+    print("Updating DB...")
     with open(dbFileName, newline='') as csvfile:
         reader = csv.reader(csvfile)
         for row in reader:
@@ -91,8 +85,9 @@ r = redis.Redis(host=REDISSERVER, port=REDISPORT, db=0)
 # rk.org/datasets/metadata/
 #TODO: add key with last time the db was updated, and only update if it's been more than a month since the last update
 #urllib.request.urlretrieve(url, file_name)
-
-#updateDB()
+if (time.time() - float(r.get("dbUpdateTime"))) > 2628000:
+    updateDB()
+    r.set("dbUpdateTime", time.time())
 
 client = ADSBClient(host=ADSBHOST, port=BEASTPORT, rawtype='beast', redisClient=r)
 client.run()
