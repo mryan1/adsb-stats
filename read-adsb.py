@@ -2,7 +2,6 @@ import pyModeS as pms
 from pyModeS.extra.tcpclient import TcpClient
 import os
 import redis
-from cachetools import cached, TTLCache
 import urllib.request
 import csv
 import time
@@ -23,7 +22,6 @@ class ADSBClient(TcpClient):
         self.oldICAO = {}
 
 
-    @cached(cache = TTLCache(maxsize = 30, ttl = 300))            
     def updateRedisPlanes(self, newICAO):
         for i in newICAO:
             self.rc.zincrby("planes", 1, i)
