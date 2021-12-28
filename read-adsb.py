@@ -32,14 +32,14 @@ class ADSBClient(TcpClient):
             if m:
                 self.rc.zincrby(("models:" + date), 1, m)
                 #add set to track model -> icao
-                self.rc.sadd(("models:icao:" + date), i)
+                self.rc.sadd((m.lower().replace(" ", "_") + ":icao:" + date), i)
 
             #get year built and incr 
             y = self.rc.hget(key, "built")
             if y:
                 self.rc.zincrby(("years:" + date), 1, y)
                 #add set to track model -> icao
-                self.rc.sadd(("years:icao:" + date), i)
+                self.rc.sadd((y + ":icao:" + date), i)
                    
     def updateCurrentICAO(self, icao, ts):
         self.currentICAO[icao] = ts
@@ -79,7 +79,7 @@ def updateDB():
             ac = {"registration":row[1], "manufacturername":row[3], "model":row[4], "serialnumber":row[6], "owner":row[13], "built": row[18]}
             r.hmset("icao:" + row[0], ac)
 
-r = redis.Redis(host=REDISSERVER, port=REDISPORT, db=0)
+r = redis.Redis(host=REDISSERVER, port=REDISPORT, db=0, encoding="utf-8", decode_responses=True)
 
 # populate reddis with aircraft data from https://opensky-network.org/datasets/metadata/
 if (time.time() - float(r.get("dbUpdateTime"))) > 2628000:
