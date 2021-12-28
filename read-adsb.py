@@ -2,7 +2,6 @@ import pyModeS as pms
 from pyModeS.extra.tcpclient import TcpClient
 import os
 import redis
-from cachetools import cached, TTLCache
 import urllib.request
 import csv
 import time
