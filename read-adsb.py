@@ -6,7 +6,7 @@ from cachetools import cached, TTLCache
 import urllib.request
 import csv
 import time
-
+from datetime import datetime
 
 ADSBHOST = os.environ['ADSBHOST']
 BEASTPORT = os.environ['BEASTPORT']
@@ -23,21 +23,21 @@ class ADSBClient(TcpClient):
         self.oldICAO = {}
 
 
-    @cached(cache = TTLCache(maxsize = 30, ttl = 300))            
     def updateRedisPlanes(self, newICAO):
+        date = datetime.today().strftime('%Y-%m-%d')
         for i in newICAO:
-            self.rc.zincrby("planes", 1, i)
+            self.rc.zincrby(("planes:" + date), 1, i)
 
             key = ("icao:" + i).lower()
             #get plane model and incr
             m = self.rc.hget(key, "model")
             if m:
-                self.rc.zincrby("models", 1, m)
+                self.rc.zincrby(("models:" + date), 1, m)
 
             #get year built and incr 
             y = self.rc.hget(key, "built")
             if y:
-                self.rc.zincrby("years", 1, y)
+                self.rc.zincrby(("years:" + date), 1, y)
 
 
     def updateCurrentICAO(self, icao, ts):
