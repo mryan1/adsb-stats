@@ -11,7 +11,8 @@ ADSBHOST = os.environ['ADSBHOST']
 BEASTPORT = os.environ['BEASTPORT']
 REDISSERVER = os.environ['REDISSERVER']
 REDISPORT = os.environ['REDISPORT']
-
+dburl = 'https://opensky-network.org/datasets/metadata/aircraftDatabase.csv'
+dbFileName = 'aircraftData.csv'
 
 # define your custom class by extending the TcpClient
 #   - implement your handle_messages() methods
@@ -27,6 +28,18 @@ class ADSBClient(TcpClient):
     def updateRedisPlanes(self, newICAO):
         for i in newICAO:
             self.rc.zincrby("planes", 1, i)
+
+            key = ("icao:" + i).lower()
+            #get plane model and incr
+            m = self.rc.hget(key, "model")
+            if m:
+                self.rc.zincrby("models", 1, m)
+
+            #get year built and incr 
+            y = self.rc.hget(key, "built")
+            if y:
+                self.rc.zincrby("years", 1, y)
+
 
     def updateCurrentICAO(self, icao, ts):
         self.currentICAO[icao] = ts
@@ -63,19 +76,23 @@ class ADSBClient(TcpClient):
                     print("New: ", new)
                     print("Current: ", self.currentICAO)
                     self.updateRedisPlanes(frozenset(new))
-                    
+
+def updateDB():
+    urllib.request.urlretrieve(dburl, dbFileName)
+    with open(dbFileName, newline='') as csvfile:
+        reader = csv.reader(csvfile)
+        for row in reader:
+            ac = {"registration":row[1], "manufacturername":row[3], "model":row[4], "serialnumber":row[6], "owner":row[13], "built": row[18]}
+            r.hmset("icao:" + row[0], ac)
+
 r = redis.Redis(host=REDISSERVER, port=REDISPORT, db=0)
 
 # populate reddis with aircraft data from https://opensky-netwo
 # rk.org/datasets/metadata/
-url = 'https://opensky-network.org/datasets/metadata/aircraftDatabase.csv'
-file_name = 'aircraftData.csv'
+#TODO: add key with last time the db was updated, and only update if it's been more than a month since the last update
 #urllib.request.urlretrieve(url, file_name)
-with open(file_name, newline='') as csvfile:
-    reader = csv.reader(csvfile)
-    for row in reader:
-        ac = {"registration":row[1], "manufacturername":row[3], "model":row[4], "serialnumber":row[6], "owner":row[13], "built": row[18]}
-        r.hmset("icao:" + row[0], ac)
+
+#updateDB()
 
 client = ADSBClient(host=ADSBHOST, port=BEASTPORT, rawtype='beast', redisClient=r)
 client.run()
