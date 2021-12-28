@@ -21,7 +21,6 @@ class ADSBClient(TcpClient):
         self.currentICAO = {}
         self.oldICAO = {}
 
-
     def updateRedisPlanes(self, newICAO):
         date = datetime.today().strftime('%Y-%m-%d')
         for i in newICAO:
@@ -32,13 +31,16 @@ class ADSBClient(TcpClient):
             m = self.rc.hget(key, "model")
             if m:
                 self.rc.zincrby(("models:" + date), 1, m)
+                #add set to track model -> icao
+                self.rc.sadd(("models:icao:" + date), i)
 
             #get year built and incr 
             y = self.rc.hget(key, "built")
             if y:
                 self.rc.zincrby(("years:" + date), 1, y)
-
-
+                #add set to track model -> icao
+                self.rc.sadd(("years:icao:" + date), i)
+                   
     def updateCurrentICAO(self, icao, ts):
         self.currentICAO[icao] = ts
         #prune icaos that aren't around anymore
@@ -79,12 +81,11 @@ def updateDB():
 
 r = redis.Redis(host=REDISSERVER, port=REDISPORT, db=0)
 
-# populate reddis with aircraft data from https://opensky-netwo
-# rk.org/datasets/metadata/
+# populate reddis with aircraft data from https://opensky-network.org/datasets/metadata/
 if (time.time() - float(r.get("dbUpdateTime"))) > 2628000:
     print("Updating DB...")
     updateDB()
-    r.set("dbUpdateTime", time.time())
+r.set("dbUpdateTime", time.time())
 
 client = ADSBClient(host=ADSBHOST, port=BEASTPORT, rawtype='beast', redisClient=r)
 client.run()
