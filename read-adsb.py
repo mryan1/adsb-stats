@@ -72,7 +72,6 @@ class ADSBClient(TcpClient):
 
 def updateDB():
     urllib.request.urlretrieve(dburl, dbFileName)
-    print("Updating DB...")
     with open(dbFileName, newline='') as csvfile:
         reader = csv.reader(csvfile)
         for row in reader:
@@ -83,9 +82,8 @@ r = redis.Redis(host=REDISSERVER, port=REDISPORT, db=0)
 
 # populate reddis with aircraft data from https://opensky-netwo
 # rk.org/datasets/metadata/
-#TODO: add key with last time the db was updated, and only update if it's been more than a month since the last update
-#urllib.request.urlretrieve(url, file_name)
 if (time.time() - float(r.get("dbUpdateTime"))) > 2628000:
+    print("Updating DB...")
     updateDB()
     r.set("dbUpdateTime", time.time())
 
