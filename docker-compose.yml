@@ -1,0 +1,21 @@
+version: "3.9"
+   
+services:
+  redis:
+    image: redis:6.2
+    command: redis-server --save 60 1 --loglevel warning
+    volumes:
+      - /home/pi/adsb-redis/redisData:/data
+    ports:
+      - "6379:6379"
+    restart: always
+  adsb-redis:
+    image: mryan21/adsb-redis:latest
+    environment:
+      - ADSBHOST=docker1
+      - BEASTPORT=30005
+      - REDISSERVER=docker1
+      - REDISPORT=6379
+    depends_on:
+      - redis
+    restart: always

@@ -40,8 +40,8 @@ class ADSBClient(TcpClient):
                 #add set to track model -> icao
                 self.rc.sadd((m.lower().replace(" ", "_") + ":icao:" + date), i)
             if o:
-                self.rc.zincrby(("owner:" + date), 1, o)
-                self.rc.zincrby(("owner"), 1, o)
+                self.rc.zincrby(("owners:" + date), 1, o)
+                self.rc.zincrby(("owners"), 1, o)
                 self.rc.sadd((o.lower().replace(" ", "_") + ":icao:" + date), i)
             if y:
                 self.rc.zincrby(("years"), 1, y)
