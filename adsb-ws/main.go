@@ -5,9 +5,9 @@ import (
 	"strconv"
 
 	"context"
-
 	"github.com/gin-gonic/gin"
 	redis "github.com/go-redis/redis/v8"
+	"strings"
 )
 
 type aircraft struct {
@@ -36,7 +36,7 @@ func connectRedis() *redis.Client {
 }
 
 func aircraftHandler(c *gin.Context) {
-	icao := c.Param("icao")
+	icao := strings.ToLower(c.Param("icao"))
 	val, err := rdb.HGetAll(ctx, "icao:"+icao).Result()
 	if err != nil {
 		panic(err)
