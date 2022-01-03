@@ -1,9 +1,13 @@
 package main
 
 import (
-	"fmt"
-	"log"
-	"net/http"
+	"os"
+	"strconv"
+
+	"context"
+
+	"github.com/gin-gonic/gin"
+	redis "github.com/go-redis/redis/v8"
 )
 
 type aircraft struct {
@@ -16,23 +20,74 @@ type aircraft struct {
 	YearBuilt        string `json:"yearbuilt"`
 }
 
-func indexHandler(w http.ResponseWriter, r *http.Request) {
-	w.Write([]byte("<h1>adsb stats</h1>"))
+var redisServer = os.Getenv("REDISSERVER")
+var redisPort = os.Getenv("REDISPORT")
+var ctx = context.Background()
+
+var rdb = connectRedis()
+
+func connectRedis() *redis.Client {
+	serverAddr := redisServer + ":" + redisPort
+	return redis.NewClient(&redis.Options{
+		Addr:     serverAddr,
+		Password: "", // no password set
+		DB:       0,  // use default DB
+	})
 }
 
-func aircraftHandler(w http.ResponseWriter, r *http.Request) {
-	id := r.URL.Query().Get("id")
-	if id == "" {
-		http.Error(w, "The id query parameter is missing", http.StatusBadRequest)
-		return
+func aircraftHandler(c *gin.Context) {
+	icao := c.Param("icao")
+	val, err := rdb.HGetAll(ctx, "icao:"+icao).Result()
+	if err != nil {
+		panic(err)
 	}
-
-	fmt.Fprintf(w, "<h1>The user id is: %s</h1>", id)
+	var ac = aircraft{
+		ICAO:             icao,
+		Registration:     val["registration"],
+		ManufacturerName: val["manufacturername"],
+		Model:            val["model"],
+		SerialNumber:     val["serialnumber"],
+		Owner:            val["owner"],
+		YearBuilt:        val["built"],
+	}
+	c.JSON(200, ac)
 }
 
+func modelHandler(c *gin.Context) {
+	endQS := c.DefaultQuery("end", "100")
+	end, _ := strconv.ParseInt(endQS, 10, 64)
+	val, err := rdb.ZRange(ctx, "models", 0, end).Result()
+	if err != nil {
+		panic(err)
+	}
+	c.JSON(200, val)
+}
+
+func ownerHandler(c *gin.Context) {
+	endQS := c.DefaultQuery("end", "100")
+	end, _ := strconv.ParseInt(endQS, 10, 64)
+	val, err := rdb.ZRange(ctx, "owner", 0, end).Result()
+	if err != nil {
+		panic(err)
+	}
+	c.JSON(200, val)
+}
+
+func yearsHandler(c *gin.Context) {
+	endQS := c.DefaultQuery("end", "100")
+	end, _ := strconv.ParseInt(endQS, 10, 64)
+	val, err := rdb.ZRange(ctx, "years", 0, end).Result()
+	if err != nil {
+		panic(err)
+	}
+	c.JSON(200, val)
+}
 func main() {
-	mux := http.NewServeMux()
-	mux.HandleFunc("/", indexHandler)
-	mux.HandleFunc("/user", userHandler)
-	log.Fatal(http.ListenAndServe(":8080", mux))
+	r := gin.Default()
+	r.GET("/aircraft/:icao", aircraftHandler)
+	r.GET("/models", modelHandler)
+	r.GET("/years", yearsHandler)
+	r.GET("/owners", ownerHandler)
+
+	r.Run()
 }
