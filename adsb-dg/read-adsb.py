@@ -27,18 +27,20 @@ class ADSBClient(TcpClient):
             self.rc.zincrby(("planes:" + date), 1, i)
 
             key = ("icao:" + i).lower()
-            #get plane model and incr
+            #get plane info
             m = self.rc.hget(key, "model")
             o = self.rc.hget(key,"owner")
             y = self.rc.hget(key, "built")
+            ma = self.rc.hget(key, "manufacturername")
 
             if m:
+                mn = ma + " " + m
                 #per day stats
-                self.rc.zincrby(("models:" + date), 1, m)
+                self.rc.zincrby(("models:" + date), 1, mn)
                 #overall stats
-                self.rc.zincrby(("models"), 1, m)
+                self.rc.zincrby(("models"), 1, mn)
                 #add set to track model -> icao
-                self.rc.sadd((m.lower().replace(" ", "_") + ":icao:" + date), i)
+                self.rc.sadd((mn.lower().replace(" ", "_") + ":icao:" + date), i)
             if o:
                 self.rc.zincrby(("owners:" + date), 1, o)
                 self.rc.zincrby(("owners"), 1, o)
