@@ -5,18 +5,23 @@ import redis
 import urllib.request
 import csv
 import time
+from opensearchpy import OpenSearch
 from datetime import datetime
 
 ADSBHOST = os.environ['ADSBHOST']
 BEASTPORT = os.environ['BEASTPORT']
 REDISSERVER = os.environ['REDISSERVER']
 REDISPORT = os.environ['REDISPORT']
+OSHOST = os.environ['OSHOST']
+OSPORT = os.environ['OSPORT']
+
 dburl = 'https://opensky-network.org/datasets/metadata/aircraftDatabase.csv'
 dbFileName = 'aircraftData.csv'
+dbtype = os
 
-class ADSBClient(TcpClient):
+class redisADSBClient(TcpClient):
     def __init__(self, host, port, rawtype, redisClient):
-        super(ADSBClient, self).__init__(host, port, rawtype)
+        super(redisADSBClient, self).__init__(host, port, rawtype)
         self.rc = redisClient
         self.currentICAO = {}
         self.oldICAO = {}
@@ -34,6 +39,8 @@ class ADSBClient(TcpClient):
             ma = self.rc.hget(key, "manufacturername")
 
             if m:
+                #TO-DO: do fuzzy match on existing items and only insert in overall "models:" if it doesn't match an existing item
+                # https://github.com/seatgeek/thefuzz
                 mn = ma + " " + m
                 #per day stats
                 self.rc.zincrby(("models:" + date), 1, mn)
@@ -50,6 +57,43 @@ class ADSBClient(TcpClient):
                 self.rc.zincrby(("years:" + date), 1, y)
                 self.rc.sadd((y + ":icao:" + date), i)
                    
+    def updateCurrentICAO(self, icao, ts):
+        self.currentICAO[icao] = ts
+        #prune icaos that aren't around anymore
+        self.currentICAO = {k:v for (k,v) in self.currentICAO.items() if v > ts-300}
+    
+    def updateRedisPlanes(self, newICAO):
+        date = datetime.today().strftime('%Y-%m-%d')
+        for i in newICAO:
+
+    def handle_messages(self, messages):
+        for msg, ts in messages:
+            if len(msg) != 28:  # wrong data length
+                continue
+            df = pms.df(msg)
+            if df != 17:  # not ADSB
+                continue
+            if pms.crc(msg) !=0:  # CRC fail
+                continue
+
+            self.oldICAO = self.currentICAO.copy()
+            icao = pms.adsb.icao(msg)
+            self.updateCurrentICAO(icao, ts)
+
+            if self.oldICAO != self.currentICAO:
+                #update redis with any new ICAOS
+                new = set(self.currentICAO) - set(self.oldICAO)
+                if len(new) > 0:
+                    print("New: ", new)
+                    print("Current: ", self.currentICAO)
+                    self.updateRedisPlanes(frozenset(new))
+
+class osADSBClient(TcpClient):
+    def __init__(self, host, port, rawtype):
+        super(osADSBClient, self).__init__(host, port, rawtype)
+        self.currentICAO = {}
+        self.oldICAO = {}
+
     def updateCurrentICAO(self, icao, ts):
         self.currentICAO[icao] = ts
         #prune icaos that aren't around anymore
@@ -75,23 +119,49 @@ class ADSBClient(TcpClient):
                 if len(new) > 0:
                     print("New: ", new)
                     print("Current: ", self.currentICAO)
-                    self.updateRedisPlanes(frozenset(new))
+                    #self.updateRedisPlanes(frozenset(new))
 
-def updateDB():
-    urllib.request.urlretrieve(dburl, dbFileName)
+def updateOsDB(searchClient):
+    print("updating OpenSearch base data")
+
+    #urllib.request.urlretrieve(dburl, dbFileName)
     with open(dbFileName, newline='') as csvfile:
         reader = csv.reader(csvfile)
         for row in reader:
-            ac = {"registration":row[1], "manufacturername":row[3], "model":row[4], "serialnumber":row[6], "owner":row[13], "built": row[18]}
-            r.hmset("icao:" + row[0], ac)
+            ac = {"ICAO":row[0], "registration":row[1], "manufacturername":row[3], "model":row[4], "serialnumber":row[6], "owner":row[13], "built": row[18]}
 
-r = redis.Redis(host=REDISSERVER, port=REDISPORT, db=0, encoding="utf-8", decode_responses=True)
+            response = searchClient.index(
+                index = 'python-test-index3',
+                body = ac,
+                id = row[0],
+                refresh = True
+            )
 
-# populate reddis with aircraft data from https://opensky-network.org/datasets/metadata/
-if (time.time() - float(r.get("dbUpdateTime"))) > 2628000:
-    print("Updating DB...")
-    updateDB()
-r.set("dbUpdateTime", time.time())
+            print('\nAdding document:')
+            print(response)
 
-client = ADSBClient(host=ADSBHOST, port=BEASTPORT, rawtype='beast', redisClient=r)
-client.run()
+    with open('updateTime', 'w') as updateTime:
+        updateTime.write(str(time.time())) 
+    
+
+searchClient = OpenSearch(
+        hosts = [{'host': OSHOST, 'port': OSPORT}],
+        http_compress = True, # enables gzip compression for request bodies
+        use_ssl = True,
+        verify_certs = True,
+        ssl_assert_hostname = False,
+        ssl_show_warn = False,
+    )
+
+# populate db with aircraft data from https://opensky-network.org/datasets/metadata/
+with open('updateTime', 'r') as updateTime:
+    try:
+        if (time.time() - float(updateTime.read())) > 2628000:
+            print("Updating DB...")
+            updateOsDB(searchClient)
+    except Exception as e: 
+        print(e)
+        updateOsDB(searchClient)
+
+    client = osADSBClient(host=ADSBHOST, port=BEASTPORT, rawtype='beast')
+    client.run()
