@@ -17,72 +17,7 @@ OSPORT = os.environ['OSPORT']
 
 dburl = 'https://opensky-network.org/datasets/metadata/aircraftDatabase.csv'
 dbFileName = 'aircraftData.csv'
-dbtype = os
-esIndex = 'aircraft3'
-
-class redisADSBClient(TcpClient):
-    def __init__(self, host, port, rawtype, redisClient):
-        super(redisADSBClient, self).__init__(host, port, rawtype)
-        self.rc = redisClient
-        self.currentICAO = {}
-        self.oldICAO = {}
-
-    def updateRedisPlanes(self, newICAO):
-        date = datetime.today().strftime('%Y-%m-%d')
-        for i in newICAO:
-            self.rc.zincrby(("planes:" + date), 1, i)
-
-            key = ("icao:" + i).lower()
-            #get plane info
-            m = self.rc.hget(key, "model")
-            o = self.rc.hget(key,"owner")
-            y = self.rc.hget(key, "built")
-            ma = self.rc.hget(key, "manufacturername")
-
-            if m:
-                #TO-DO: do fuzzy match on existing items and only insert in overall "models:" if it doesn't match an existing item
-                # https://github.com/seatgeek/thefuzz
-                mn = ma + " " + m
-                #per day stats
-                self.rc.zincrby(("models:" + date), 1, mn)
-                #overall stats
-                self.rc.zincrby(("models"), 1, mn)
-                #add set to track model -> icao
-                self.rc.sadd((mn.lower().replace(" ", "_") + ":icao:" + date), i)
-            if o:
-                self.rc.zincrby(("owners:" + date), 1, o)
-                self.rc.zincrby(("owners"), 1, o)
-                self.rc.sadd((o.lower().replace(" ", "_") + ":icao:" + date), i)
-            if y:
-                self.rc.zincrby(("years"), 1, y)
-                self.rc.zincrby(("years:" + date), 1, y)
-                self.rc.sadd((y + ":icao:" + date), i)
-                   
-    def updateCurrentICAO(self, icao, ts):
-        self.currentICAO[icao] = ts
-        #prune icaos that aren't around anymore
-        self.currentICAO = {k:v for (k,v) in self.currentICAO.items() if v > ts-300}
-
-    def handle_messages(self, messages):
-        for msg, ts in messages:
-            if len(msg) != 28:  # wrong data length
-                continue
-            df = pms.df(msg)
-            if df != 17:  # not ADSB
-                continue
-            if pms.crc(msg) !=0:  # CRC fail
-                continue
-
-            self.oldICAO = self.currentICAO.copy()
-            icao = pms.adsb.icao(msg)
-            self.updateCurrentICAO(icao, ts)
-
-            if self.oldICAO != self.currentICAO:
-                #update redis with any new ICAOS
-                new = set(self.currentICAO) - set(self.oldICAO)
-                if len(new) > 0:
-                    print("New: ", new)
-                    self.updateRedisPlanes(frozenset(new))
+esIndex = 'aircraft4'
 
 class osADSBClient(TcpClient):
     def __init__(self, host, port, rawtype, searchClient):
@@ -97,40 +32,43 @@ class osADSBClient(TcpClient):
         self.currentICAO = {k:v for (k,v) in self.currentICAO.items() if v > ts-300}
 
     def updateSeenCounter(self, icao):
-        update = ''' {
+        update = ''' {{
                     "scripted_upsert": true,
-                    "script": {
+                    "script": {{
                         "source": "ctx._source.counter += params.count",
                         "lang": "painless",
-                        "params": {
+                        "params": {{
                         "count": 1
-                        }
-                    },
-                    "upsert": {
+                        }}
+                    }},
+                    "upsert": {{
+                        "ICAO": "{icao}",
                         "counter": 1
-                    }            
-                } '''
+                    }}            
+                }} '''
+        print(update.format(icao=str.lower(icao)))
         try:
-            response = self.sc.update(index='aircraft', id=str.lower(icao), body=update)
+            response = self.sc.update(index=esIndex, id=str.lower(icao), body=update.format(icao=str.lower(icao)))
         except Exception as e:
-            print(e)
-
+            print(e.info)
+#                   "datesseen": "[{seentime}]"
     def updateSeenDateTimes(self,icao):
-        dt = str(datetime.now())
-        update = '''
+        dt = str(datetime.utcnow().strftime("%Y-%m-%d"'T'"%H:%M:%S"))
+        updateSeenDateTime = '''
             {{
             "scripted_upsert": true,
-            "script": {{
-                "source": "ctx._source.datesseen.add(params.dt)",
-                "lang": "painless",
-                "params": {{
-                    "dt": "{seentime}"
+                "script": {{
+                    "source": "if(ctx._source.datesseen == null){{ctx._source.datesseen = params.ds}} else {{ctx._source.datesseen.add(params.ds)}}",
+                    "params": {{
+                    "ds": "{seentime}"
                     }}
-                }}
+                }},
+                "upsert": {{}}
             }}
         '''
+        #print(updateSeenDateTime.format(seentime=dt, icao=str.lower(icao)))
         try:
-            response = self.sc.update(index='aircraft', id=str.lower(icao), body=update.format(seentime=dt))
+            response = self.sc.update(index=esIndex, id=str.lower(icao), body=updateSeenDateTime.format(seentime=dt, icao=icao))
         except Exception as e:
             print(e.info)
 
@@ -178,7 +116,7 @@ def updateOsDB(searchClient):
             if count >= 100:
                 response = searchClient.bulk(
                             body = ('\n'.join(map(json.dumps, ndjson))),
-                            index = 'aircraft'
+                            index = esIndex
                         )
                 print('\n Performing bulk import:')
                 print(response)
