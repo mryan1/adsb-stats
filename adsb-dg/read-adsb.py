@@ -5,19 +5,20 @@ import redis
 import urllib.request
 import csv
 import time
+import datetime
 from opensearchpy import OpenSearch
 from datetime import datetime
+import json
 
 ADSBHOST = os.environ['ADSBHOST']
 BEASTPORT = os.environ['BEASTPORT']
-REDISSERVER = os.environ['REDISSERVER']
-REDISPORT = os.environ['REDISPORT']
 OSHOST = os.environ['OSHOST']
 OSPORT = os.environ['OSPORT']
 
 dburl = 'https://opensky-network.org/datasets/metadata/aircraftDatabase.csv'
 dbFileName = 'aircraftData.csv'
 dbtype = os
+esIndex = 'aircraft3'
 
 class redisADSBClient(TcpClient):
     def __init__(self, host, port, rawtype, redisClient):
@@ -61,10 +62,6 @@ class redisADSBClient(TcpClient):
         self.currentICAO[icao] = ts
         #prune icaos that aren't around anymore
         self.currentICAO = {k:v for (k,v) in self.currentICAO.items() if v > ts-300}
-    
-    def updateRedisPlanes(self, newICAO):
-        date = datetime.today().strftime('%Y-%m-%d')
-        for i in newICAO:
 
     def handle_messages(self, messages):
         for msg, ts in messages:
@@ -85,20 +82,64 @@ class redisADSBClient(TcpClient):
                 new = set(self.currentICAO) - set(self.oldICAO)
                 if len(new) > 0:
                     print("New: ", new)
-                    print("Current: ", self.currentICAO)
                     self.updateRedisPlanes(frozenset(new))
 
 class osADSBClient(TcpClient):
-    def __init__(self, host, port, rawtype):
+    def __init__(self, host, port, rawtype, searchClient):
         super(osADSBClient, self).__init__(host, port, rawtype)
         self.currentICAO = {}
         self.oldICAO = {}
+        self.sc = searchClient
 
     def updateCurrentICAO(self, icao, ts):
         self.currentICAO[icao] = ts
         #prune icaos that aren't around anymore
         self.currentICAO = {k:v for (k,v) in self.currentICAO.items() if v > ts-300}
 
+    def updateSeenCounter(self, icao):
+        update = ''' {
+                    "scripted_upsert": true,
+                    "script": {
+                        "source": "ctx._source.counter += params.count",
+                        "lang": "painless",
+                        "params": {
+                        "count": 1
+                        }
+                    },
+                    "upsert": {
+                        "counter": 1
+                    }            
+                } '''
+        try:
+            response = self.sc.update(index='aircraft', id=str.lower(icao), body=update)
+        except Exception as e:
+            print(e)
+
+    def updateSeenDateTimes(self,icao):
+        dt = str(datetime.now())
+        update = '''
+            {{
+            "scripted_upsert": true,
+            "script": {{
+                "source": "ctx._source.datesseen.add(params.dt)",
+                "lang": "painless",
+                "params": {{
+                    "dt": "{seentime}"
+                    }}
+                }}
+            }}
+        '''
+        try:
+            response = self.sc.update(index='aircraft', id=str.lower(icao), body=update.format(seentime=dt))
+        except Exception as e:
+            print(e.info)
+
+    def updateOsPlanes(self, newICAO):
+        date = datetime.today().strftime('%Y-%m-%d')
+        for i in newICAO:
+            self.updateSeenCounter(i)
+            self.updateSeenDateTimes(i)
+
     def handle_messages(self, messages):
         for msg, ts in messages:
             if len(msg) != 28:  # wrong data length
@@ -118,32 +159,35 @@ class osADSBClient(TcpClient):
                 new = set(self.currentICAO) - set(self.oldICAO)
                 if len(new) > 0:
                     print("New: ", new)
-                    print("Current: ", self.currentICAO)
-                    #self.updateRedisPlanes(frozenset(new))
+                    self.updateOsPlanes(frozenset(new))
 
 def updateOsDB(searchClient):
     print("updating OpenSearch base data")
-
+    #TODO: add datesseen and counter fields
+    #TODO: skip csv header
     #urllib.request.urlretrieve(dburl, dbFileName)
     with open(dbFileName, newline='') as csvfile:
         reader = csv.reader(csvfile)
+        ndjson = []
+        count = 0
         for row in reader:
-            ac = {"ICAO":row[0], "registration":row[1], "manufacturername":row[3], "model":row[4], "serialnumber":row[6], "owner":row[13], "built": row[18]}
-
-            response = searchClient.index(
-                index = 'python-test-index3',
-                body = ac,
-                id = row[0],
-                refresh = True
-            )
-
-            print('\nAdding document:')
-            print(response)
-
+            ndjson.append({"index": {"_id" :row[0]}})
+            ac = {"ICAO":row[0], "registration":row[1], "manufacturername":row[3], "model":row[4], "serialnumber":row[6], "owner":row[13], "built": row[18] }
+            ndjson.append(ac)
+            count = count+1
+            if count >= 100:
+                response = searchClient.bulk(
+                            body = ('\n'.join(map(json.dumps, ndjson))),
+                            index = 'aircraft'
+                        )
+                print('\n Performing bulk import:')
+                print(response)
+                ndjson.clear()
+                count = 0
+                time.sleep(1.5)
     with open('updateTime', 'w') as updateTime:
         updateTime.write(str(time.time())) 
     
-
 searchClient = OpenSearch(
         hosts = [{'host': OSHOST, 'port': OSPORT}],
         http_compress = True, # enables gzip compression for request bodies
@@ -162,6 +206,5 @@ with open('updateTime', 'r') as updateTime:
     except Exception as e: 
         print(e)
         updateOsDB(searchClient)
-
-    client = osADSBClient(host=ADSBHOST, port=BEASTPORT, rawtype='beast')
+    client = osADSBClient(ADSBHOST, BEASTPORT, 'beast', searchClient)
     client.run()
