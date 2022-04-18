@@ -46,7 +46,7 @@ class osADSBClient(TcpClient):
                         "counter": 1
                     }}            
                 }} '''
-        print(update.format(icao=str.lower(icao)))
+        #print(update.format(icao=str.lower(icao)))
         try:
             response = self.sc.update(index=esIndex, id=str.lower(icao), body=update.format(icao=str.lower(icao)))
         except Exception as e:

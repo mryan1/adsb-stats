@@ -1,2 +1,4 @@
 pyModeS
 redis
+opensearch-py
+requests

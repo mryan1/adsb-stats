@@ -5,9 +5,10 @@ import (
 	"strconv"
 
 	"context"
+	"strings"
+
 	"github.com/gin-gonic/gin"
 	redis "github.com/go-redis/redis/v8"
-	"strings"
 )
 
 type aircraft struct {
@@ -27,6 +28,7 @@ var ctx = context.Background()
 var rdb = connectRedis()
 
 func connectRedis() *redis.Client {
+	//TO-DO: add error handling
 	serverAddr := redisServer + ":" + redisPort
 	return redis.NewClient(&redis.Options{
 		Addr:     serverAddr,
@@ -41,6 +43,8 @@ func aircraftHandler(c *gin.Context) {
 	if err != nil {
 		panic(err)
 	}
+	//TO-DO: setup as method on aricraft struct
+	//TO-DO: move to a model module?
 	var ac = aircraft{
 		ICAO:             icao,
 		Registration:     val["registration"],
@@ -56,13 +60,14 @@ func aircraftHandler(c *gin.Context) {
 func modelHandler(c *gin.Context) {
 	endQS := c.DefaultQuery("end", "100")
 	end, _ := strconv.ParseInt(endQS, 10, 64)
-	val, err := rdb.ZRange(ctx, "models", 0, end).Result()
+	val, err := rdb.ZRangeWithScores(ctx, "models", 0, end).Result()
 	if err != nil {
 		panic(err)
 	}
 	c.JSON(200, val)
 }
 
+//TO-DO: refactor to have one handler handle owners, years, etc.
 func ownerHandler(c *gin.Context) {
 	endQS := c.DefaultQuery("end", "100")
 	end, _ := strconv.ParseInt(endQS, 10, 64)
@@ -84,10 +89,11 @@ func yearsHandler(c *gin.Context) {
 }
 func main() {
 	r := gin.Default()
+	r.SetTrustedProxies([]string{""})
 	r.GET("/aircraft/:icao", aircraftHandler)
 	r.GET("/models", modelHandler)
 	r.GET("/years", yearsHandler)
 	r.GET("/owners", ownerHandler)
 
-	r.Run()
+	r.Run(":8005")
 }
