@@ -103,7 +103,7 @@ def updateOsDB(searchClient):
     print("updating OpenSearch base data")
     #TODO: add datesseen and counter fields
     #TODO: skip csv header
-    #urllib.request.urlretrieve(dburl, dbFileName)
+    urllib.request.urlretrieve(dburl, dbFileName)
     with open(dbFileName, newline='') as csvfile:
         reader = csv.reader(csvfile)
         ndjson = []
